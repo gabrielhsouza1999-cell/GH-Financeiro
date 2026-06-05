@@ -54,7 +54,7 @@ const blank = {
 let state = loadState();
 let activeTab = "dashboard";
 const urlMode = new URLSearchParams(window.location.search).get("modo") || window.location.hash.replace("#", "");
-let accessMode = urlMode === "lancamento" || urlMode === "operator" ? "operator" : sessionStorage.getItem(ACCESS_KEY) || "manager";
+let accessMode = urlMode === "gestor" || urlMode === "manager" ? "manager" : "operator";
 let operatorNotice = "";
 let cloudNotice = "";
 

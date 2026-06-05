@@ -49,7 +49,7 @@ window.GH_SUPABASE = {
 
 Links de uso depois de hospedado:
 
-- Gestor: `https://seu-dominio/index.html`
-- Funcionário: `https://seu-dominio/index.html?modo=lancamento`
+- Funcionário: `https://seu-dominio/`
+- Gestor: `https://seu-dominio/?modo=gestor`
 
 Com as políticas do `supabase.sql`, o funcionário consegue inserir lançamentos, mas não consegue ler o histórico pela interface nem pela API anônima. O gestor precisa fazer login para ler e gerenciar os dados.
