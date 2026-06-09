@@ -446,15 +446,15 @@ function addRow(collection) {
 
 async function submitBlindEntry(collection, values) {
   const row = { id: uid(), ...values };
+  state[collection] = [...state[collection], row];
+  saveState();
   try {
     if (supabaseReady()) await insertRemoteEntry(collection, row, false);
-    state[collection] = [...state[collection], row];
-    saveState();
     operatorNotice = supabaseReady()
       ? "Lançamento enviado com sucesso. Os valores não ficam visíveis neste modo."
       : "Lançamento salvo localmente. Configure o Supabase para o gestor acompanhar de outro lugar.";
   } catch (error) {
-    operatorNotice = `Não foi possível enviar o lançamento: ${error.message}`;
+    operatorNotice = `Lançamento salvo neste aparelho, mas não foi enviado para a nuvem: ${error.message}. Tente novamente em Enviar dados salvos.`;
   }
   render();
 }
