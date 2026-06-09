@@ -206,11 +206,35 @@ async function saveRemoteSettings() {
 async function insertRemoteEntry(collection, row, useAuth = Boolean(authToken())) {
   if (!supabaseReady()) return;
   const { id, ...payload } = row;
-  await supabaseFetch("/rest/v1/gh_entries", {
+  await supabaseFetch("/rest/v1/gh_entries?on_conflict=id", {
     method: "POST",
-    headers: { Prefer: "return=minimal" },
+    headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
     body: JSON.stringify({ id, collection, payload }),
   }, useAuth);
+}
+
+async function syncLocalEntriesAsOperator() {
+  if (!supabaseReady()) {
+    operatorNotice = "Supabase ainda não configurado. Os dados continuam salvos apenas neste aparelho.";
+    render();
+    return;
+  }
+  const collections = ["sales", "expenses", "payables", "debts", "withdrawals", "consumption", "stock", "actionPlan"];
+  let sent = 0;
+  try {
+    for (const collection of collections) {
+      for (const row of state[collection] || []) {
+        await insertRemoteEntry(collection, row, false);
+        sent += 1;
+      }
+    }
+    operatorNotice = sent
+      ? `Dados salvos neste aparelho reenviados para a nuvem: ${sent} lançamento(s).`
+      : "Não há lançamentos locais para reenviar.";
+  } catch (error) {
+    operatorNotice = `Não foi possível reenviar os dados: ${error.message}`;
+  }
+  render();
 }
 
 async function updateRemoteEntry(collection, row) {
@@ -744,7 +768,10 @@ function operatorView() {
     <main class="operator-shell">
       <header class="operator-header">
         <div class="brand"><div class="mark">GH</div><div><h1>GH Financeiro</h1><p>Modo lançamento</p></div></div>
-        <button class="btn secondary" onclick="setAccessMode('manager')">Entrar como gestor</button>
+        <div class="actions">
+          <button class="btn secondary" onclick="syncLocalEntriesAsOperator()">Enviar dados salvos</button>
+          <button class="btn secondary" onclick="setAccessMode('manager')">Entrar como gestor</button>
+        </div>
       </header>
       <section class="operator-hero">
         <p class="eyebrow">Preenchimento diário</p>
@@ -851,6 +878,7 @@ window.seedDemo = seedDemo;
 window.clearData = clearData;
 window.setAccessMode = setAccessMode;
 window.submitOperatorForm = submitOperatorForm;
+window.syncLocalEntriesAsOperator = syncLocalEntriesAsOperator;
 window.managerLogin = managerLogin;
 window.managerLogout = managerLogout;
 window.refreshCloud = refreshCloud;
