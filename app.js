@@ -24,6 +24,7 @@ const tabs = [
   ["consumption", "Consumo próprio"],
   ["stock", "Compras estoque"],
   ["action", "Plano de ação"],
+  ["history", "Histórico mensal"],
 ];
 
 const blank = {
@@ -48,6 +49,7 @@ const blank = {
   consumption: [],
   stock: [],
   actionPlan: [],
+  monthlySnapshots: [],
   previousMonthCashFree: 0,
 };
 
@@ -175,6 +177,7 @@ async function loadRemoteState() {
   if (!supabaseReady() || !authToken()) return;
   const settings = await supabaseFetch("/rest/v1/gh_settings?id=eq.default&select=data", { method: "GET" }, true);
   const entries = await supabaseFetch("/rest/v1/gh_entries?select=id,collection,payload&order=created_at.asc", { method: "GET" }, true);
+  const snapshots = await supabaseFetch("/rest/v1/gh_monthly_snapshots?select=id,month,company,summary,state,created_at&order=month.desc", { method: "GET" }, true);
   const next = structuredClone(blank);
   const data = settings?.[0]?.data || {};
   next.config = { ...next.config, ...(data.config || {}) };
@@ -184,6 +187,7 @@ async function loadRemoteState() {
       next[entry.collection].push({ id: entry.id, ...(entry.payload || {}) });
     }
   });
+  next.monthlySnapshots = snapshots || [];
   state = next;
   saveState();
 }
@@ -250,6 +254,20 @@ async function updateRemoteEntry(collection, row) {
 async function deleteRemoteEntry(id) {
   if (!supabaseReady() || !authToken()) return;
   await supabaseFetch(`/rest/v1/gh_entries?id=eq.${id}`, { method: "DELETE" }, true);
+}
+
+async function insertRemoteSnapshot(snapshot) {
+  if (!supabaseReady() || !authToken()) return;
+  await supabaseFetch("/rest/v1/gh_monthly_snapshots?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
+    body: JSON.stringify(snapshot),
+  }, true);
+}
+
+async function clearRemoteEntries() {
+  if (!supabaseReady() || !authToken()) return;
+  await supabaseFetch("/rest/v1/gh_entries?id=not.is.null", { method: "DELETE" }, true);
 }
 
 function money(value) {
@@ -560,6 +578,85 @@ function clearData() {
   render();
 }
 
+function nextMonth(month) {
+  const [year, monthNumber] = String(month || new Date().toISOString().slice(0, 7)).split("-").map(Number);
+  const date = new Date(year || new Date().getFullYear(), monthNumber || 1, 1);
+  return date.toISOString().slice(0, 7);
+}
+
+function snapshotSummary(m) {
+  return {
+    revenue: m.revenue,
+    grossRevenue: m.grossRevenue,
+    bankFees: m.bankFees,
+    expenseTotal: m.expenseTotal,
+    cashCurrent: m.cashCurrent,
+    bankCurrent: m.bankCurrent,
+    totalBalance: m.totalBalance,
+    cashFree: m.cashFree,
+    stock: m.stock,
+    stockEstimated: m.stockEstimated,
+    withdrawals: m.withdrawals,
+    consumption: m.consumption,
+    payablesPending: m.payablesPending,
+    debtTotal: m.debtTotal,
+    debtMonthly: m.debtMonthly,
+    dailyTicket: m.dailyTicket,
+    survivalDays: m.survivalDays,
+    bleeding: m.bleeding,
+  };
+}
+
+async function closeMonth() {
+  if (accessMode !== "manager") return;
+  const m = metrics();
+  const currentMonth = state.config.month;
+  const label = currentMonth || "mês atual";
+  const confirmed = confirm(`Fechar ${label} e iniciar ${nextMonth(currentMonth)} com lançamentos zerados? O histórico ficará salvo.`);
+  if (!confirmed) return;
+
+  const snapshot = {
+    id: uid(),
+    month: currentMonth,
+    company: state.config.company,
+    summary: snapshotSummary(m),
+    state: { ...structuredClone(state), monthlySnapshots: [] },
+    created_at: new Date().toISOString(),
+  };
+
+  const previousSnapshots = state.monthlySnapshots || [];
+  const newConfig = {
+    ...state.config,
+    month: nextMonth(currentMonth),
+    cashInitial: Math.max(0, m.cashCurrent),
+    bankInitial: Math.max(0, m.bankCurrent),
+    stockInitial: Math.max(0, m.stockEstimated),
+  };
+
+  state = {
+    ...structuredClone(blank),
+    config: newConfig,
+    debts: structuredClone(snapshot.state.debts || []),
+    monthlySnapshots: [snapshot, ...previousSnapshots],
+    previousMonthCashFree: m.cashFree,
+  };
+  saveState();
+
+  try {
+    await insertRemoteSnapshot(snapshot);
+    await clearRemoteEntries();
+    for (const debt of state.debts || []) {
+      await insertRemoteEntry("debts", debt, true);
+    }
+    await saveRemoteSettings();
+    cloudNotice = `Mês ${label} fechado e salvo no histórico. Novo mês iniciado em ${state.config.month}.`;
+  } catch (error) {
+    cloudNotice = `Fechamento salvo localmente, mas houve erro na nuvem: ${error.message}`;
+  }
+  activeTab = "dashboard";
+  render();
+}
+
 function input(path, value, type = "text") {
   return `<input type="${type}" value="${escapeHtml(value)}" onchange="setDeep('${path}', this.value)" />`;
 }
@@ -699,6 +796,34 @@ function actionView() {
     <tr><td>${rowInput("actionPlan", row, "problem")}</td><td>${rowInput("actionPlan", row, "action")}</td><td>${rowInput("actionPlan", row, "owner")}</td><td>${rowInput("actionPlan", row, "due", "date")}</td><td>${rowSelect("actionPlan", row, "status", ["Pendente", "Em andamento", "Concluído"])}</td><td>${removeButton("actionPlan", row)}</td></tr>`).join(""));
 }
 
+function historyView() {
+  const rows = (state.monthlySnapshots || []).map((snapshot) => {
+    const s = snapshot.summary || {};
+    return `<tr>
+      <td><strong>${escapeHtml(snapshot.month || "-")}</strong></td>
+      <td>${escapeHtml(snapshot.company || state.config.company || "-")}</td>
+      <td>${money(s.revenue)}</td>
+      <td>${money(s.expenseTotal)}</td>
+      <td>${money(s.cashFree)}</td>
+      <td>${money(s.stockEstimated)}</td>
+      <td>${pct(s.bleeding || 0)}</td>
+      <td>${escapeHtml(String(snapshot.created_at || "").slice(0, 10))}</td>
+    </tr>`;
+  }).join("");
+
+  return `<section class="section">
+    <div class="topbar" style="margin-bottom:12px">
+      <h3>Histórico mensal</h3>
+      <button class="btn" onclick="closeMonth()">Fechar mês atual</button>
+    </div>
+    <div class="legend"><span>O fechamento guarda o mês atual e inicia o próximo com vendas, despesas, contas, retiradas, consumo, estoque e plano de ação zerados.</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Mês</th><th>Empresa</th><th>Faturamento líquido</th><th>Despesas</th><th>Caixa livre</th><th>Estoque estimado</th><th>Sangramento</th><th>Fechado em</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="8">Nenhum mês fechado ainda.</td></tr>`}</tbody>
+    </table></div>
+  </section>`;
+}
+
 function dataSection(title, collection, headers, rows, footer = "") {
   return `<section class="section"><div class="topbar" style="margin-bottom:12px"><h3>${title}</h3><button class="btn" onclick="addRow('${collection}')">Adicionar</button></div>${footer}<div class="table-wrap"><table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="${headers.length}">Nenhum lançamento cadastrado.</td></tr>`}</tbody></table></div></section>`;
 }
@@ -836,6 +961,7 @@ function currentView() {
     consumption: () => simpleMoneyView("Consumo próprio", "consumption", [["Data", "date", "date"], ["Produto", "product"], ["Quantidade", "quantity", "number"], ["Valor", "value", "number"]], `<div class="legend"><span>Total consumido: <strong>${money(m.consumption)}</strong></span><span>Percentual: <strong>${pct(m.consumptionPct)}</strong></span></div>`),
     stock: () => simpleMoneyView("Compras de estoque", "stock", [["Data", "date", "date"], ["Fornecedor", "supplier"], ["Valor", "value", "number"]], `<div class="legend"><span>Total investido: <strong>${money(m.stock)}</strong></span><span>Percentual: <strong>${pct(m.stockPct)}</strong></span></div>`),
     action: actionView,
+    history: historyView,
   };
   return views[activeTab]();
 }
@@ -857,6 +983,7 @@ function render() {
           <div><p class="eyebrow">Dashboard executivo</p><h2>${escapeHtml(state.config.company || "GH Financeiro")}</h2><p>Preenchimento diário simples, indicadores automáticos e plano de ação mensal.</p></div>
           <div class="actions">
             ${cloudControls()}
+            <button class="btn secondary" onclick="closeMonth()">Fechar mês</button>
             <button class="btn secondary" onclick="setAccessMode('operator')">Modo lançamento</button>
             <button class="btn secondary" onclick="seedDemo()">Carregar exemplo</button>
             <button class="btn secondary" onclick="clearData()">Limpar dados</button>
@@ -879,6 +1006,7 @@ window.clearData = clearData;
 window.setAccessMode = setAccessMode;
 window.submitOperatorForm = submitOperatorForm;
 window.syncLocalEntriesAsOperator = syncLocalEntriesAsOperator;
+window.closeMonth = closeMonth;
 window.managerLogin = managerLogin;
 window.managerLogout = managerLogout;
 window.refreshCloud = refreshCloud;

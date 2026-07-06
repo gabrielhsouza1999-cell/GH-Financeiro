@@ -21,6 +21,7 @@ Para uso compartilhado, hospede a pasta e configure o Supabase.
 - Botão de relatório mensal via impressão/PDF do navegador.
 - Modo lançamento cego: funcionário registra dados sem visualizar totais, histórico, dashboard ou relatórios.
 - Modo gestor protegido por PIN configurável. PIN padrão: `1234`.
+- Fechamento mensal: salva um snapshot do mês, mantém histórico e inicia o mês seguinte com lançamentos zerados e saldos iniciais atualizados.
 
 ## Observação técnica
 
@@ -53,3 +54,14 @@ Links de uso depois de hospedado:
 - Gestor: `https://seu-dominio/?modo=gestor`
 
 Com as políticas do `supabase.sql`, o funcionário consegue inserir lançamentos, mas não consegue ler o histórico pela interface nem pela API anônima. O gestor precisa fazer login para ler e gerenciar os dados.
+
+## Fechar mês
+
+No modo gestor, use **Fechar mês**. O sistema:
+
+- salva o mês atual em `gh_monthly_snapshots`;
+- registra faturamento, despesas, caixa livre, estoque estimado e indicadores;
+- inicia o próximo mês;
+- leva caixa, banco e estoque estimados como saldos iniciais;
+- mantém dívidas antigas;
+- zera vendas, despesas, contas a pagar, retiradas, consumo próprio, compras de estoque e plano de ação.
