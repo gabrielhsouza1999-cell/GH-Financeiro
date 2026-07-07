@@ -177,7 +177,16 @@ async function loadRemoteState() {
   if (!supabaseReady() || !authToken()) return;
   const settings = await supabaseFetch("/rest/v1/gh_settings?id=eq.default&select=data", { method: "GET" }, true);
   const entries = await supabaseFetch("/rest/v1/gh_entries?select=id,collection,payload&order=created_at.asc", { method: "GET" }, true);
-  const snapshots = await supabaseFetch("/rest/v1/gh_monthly_snapshots?select=id,month,company,summary,state,created_at&order=month.desc", { method: "GET" }, true);
+  let snapshots = [];
+  try {
+    snapshots = await supabaseFetch("/rest/v1/gh_monthly_snapshots?select=id,month,company,summary,state,created_at&order=month.desc", { method: "GET" }, true);
+  } catch (error) {
+    if (String(error.message).includes("gh_monthly_snapshots") || String(error.message).includes("PGRST205")) {
+      cloudNotice = "Login realizado. O histórico mensal ainda não está disponível no cache do Supabase; rode o SQL de histórico ou aguarde alguns instantes.";
+    } else {
+      throw error;
+    }
+  }
   const next = structuredClone(blank);
   const data = settings?.[0]?.data || {};
   next.config = { ...next.config, ...(data.config || {}) };
